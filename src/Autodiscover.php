@@ -474,14 +474,46 @@ class Autodiscover
         $this->last_curl_errno  = curl_errno($ch);
         $this->last_curl_error  = curl_error($ch);
 
-        if ($this->last_info['http_code'] == 302
-            || $this->last_info['http_code'] == 301) {
-            if ($this->tryViaUrl($this->last_response_headers['location'])) {
+        if (($this->last_info['http_code'] == 302
+            || $this->last_info['http_code'] == 301)
+            && isset($this->last_response_headers['location'])) {
+            $location = $this->last_response_headers['location'];
+            if ($this->isTrustedRedirect($location)
+                && $this->tryViaUrl($location)) {
                 return self::AUTODISCOVERED_VIA_UNAUTHENTICATED_GET;
             }
         }
 
         return false;
+    }
+
+    /**
+     * Check a redirect target received over plain HTTP before sending
+     * credentials to it.
+     *
+     * The redirect arrives unauthenticated, so anyone on the network path can
+     * forge it. Only HTTPS targets inside the email address' domain are
+     * accepted.
+     *
+     * @param string $url
+     *   Redirect target from the Location header.
+     * @return boolean
+     */
+    protected function isTrustedRedirect($url)
+    {
+        $parts = parse_url($url);
+        if ($parts === false || !isset($parts['scheme'], $parts['host'])
+            || strtolower($parts['scheme']) !== 'https') {
+            return false;
+        }
+
+        $host = strtolower($parts['host']);
+        $domain = strtolower($this->tld);
+        $suffix = '.' . $domain;
+
+        return $domain !== ''
+            && ($host === $domain
+                || substr($host, -strlen($suffix)) === $suffix);
     }
 
     /**
@@ -578,6 +610,8 @@ class Autodiscover
             CURLOPT_TIMEOUT         => $timeout,
             CURLOPT_CONNECTTIMEOUT  => $this->connection_timeout,
             CURLOPT_FOLLOWLOCATION  => true,
+            CURLOPT_PROTOCOLS       => CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
             CURLOPT_HEADER          => false,
             CURLOPT_HEADERFUNCTION  => array($this, 'readHeaders'),
             CURLOPT_IPRESOLVE       => CURL_IPRESOLVE_V4,
